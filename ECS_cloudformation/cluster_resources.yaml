@@ -1,0 +1,439 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: ECS Fargate Cluster 
+
+#Note: Secret ValueFrom parameter in task defition should be changed for prod/dev/stage env
+
+Parameters:
+  SubnetIds:
+    Type: AWS::SSM::Parameter::Value<List<String>>
+    Default: subnetsIDs
+  Environment:
+    Type: String
+  TaskMemory:
+    Type: String
+    Default: "4096"
+    Description: Memory for the task definitions
+  TaskCpu:
+    Type: String
+    Default: "2048"
+    Description: CPU for the task definitions
+
+Conditions:
+  IsProdEnv: !Equals [!Ref Environment, "prod"]
+
+Mappings:
+  EnvironmentConfigs:
+    dev:
+      LoyaltyAccessKeysSecretName: 
+      awsaccesskey: ""
+      awssecretkey: ""
+    stage:
+      LoyaltyAccessKeysSecretName: 
+      awsaccesskey: ""
+      awssecretkey: ""
+    prod:
+      LoyaltyAccessKeysSecretName: 
+      awsaccesskey: ""
+      awssecretkey: ""
+    
+Resources:
+
+  Servicesvc1LogsGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/ecs/svc1-${Environment}"
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: svc1
+        - Key: Name
+          Value: !Sub "svc1-${Environment}-logs-group"
+    UpdateReplacePolicy: Retain   
+    DeletionPolicy: Retain  
+
+  Servicesv2LogsGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/ecs/sv2-${Environment}"
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: Loyalty
+        - Key: Name
+          Value: !Sub "sv2-${Environment}-logs-group"
+    UpdateReplacePolicy: Retain   
+    DeletionPolicy: Retain  
+
+  TaskRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: ECSTaskPolicy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:CreateLogGroup
+                  - logs:PutLogEvents
+                  - s3:*
+                  - ssm:GetParameter
+                  - secretsmanager:GetSecretValue
+                Resource: "*"
+        - PolicyName: ecsfullaccesspolicy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - application-autoscaling:*
+                  - appmesh:*
+                  - autoscaling:*
+                  - cloudformation:CreateStack
+                  - cloudformation:DeleteStack
+                  - cloudformation:DescribeStack*
+                  - cloudformation:UpdateStack
+                  - cloudwatch:DeleteAlarms
+                  - cloudwatch:DescribeAlarms
+                  - cloudwatch:GetMetricStatistics
+                  - cloudwatch:PutMetricAlarm
+                  - codedeploy:*
+                  - ec2:*
+                  - ecs:*
+                  - elasticfilesystem:DescribeAccessPoints
+                  - elasticfilesystem:DescribeFileSystems
+                  - elasticloadbalancing:*
+                  - events:DeleteRule
+                  - events:DescribeRule
+                  - events:ListRuleNamesByTarget
+                  - events:ListTargetsByRule
+                  - events:PutRule
+                  - events:PutTargets
+                  - events:RemoveTargets
+                  - fsx:DescribeFileSystems
+                  - iam:ListAttachedRolePolicies
+                  - iam:ListInstanceProfiles
+                  - iam:ListRoles
+                  - lambda:ListFunctions
+                  - logs:CreateLogGroup
+                  - logs:DescribeLogGroups
+                  - logs:FilterLogEvents
+                  - route53:CreateHostedZone
+                  - route53:DeleteHostedZone
+                  - route53:GetHealthCheck
+                  - route53:GetHostedZone
+                  - route53:ListHostedZonesByName
+                  - servicediscovery:*
+                  - sns:ListTopics
+                Resource: "*"
+        - PolicyName: Secretmanagerreadwrite
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - secretsmanager:*
+                  - cloudformation:CreateChangeSet
+                  - cloudformation:DescribeChangeSet
+                  - cloudformation:DescribeStackResource
+                  - cloudformation:DescribeStacks
+                  - cloudformation:ExecuteChangeSet
+                  - docdb-elastic:GetCluster
+                  - docdb-elastic:ListClusters
+                  - ec2:DescribeSecurityGroups
+                  - ec2:DescribeSubnets
+                  - ec2:DescribeVpcs
+                  - kms:DescribeKey
+                  - kms:ListAliases
+                  - kms:ListKeys
+                  - lambda:ListFunctions
+                  - rds:DescribeDBClusters
+                  - rds:DescribeDBInstances
+                  - redshift:DescribeClusters
+                  - tag:GetResources
+                Resource: "*"
+        - PolicyName: AmazonEC2ContainerRegistryReadOnly
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ecr:*
+                Resource: "*"
+
+  TaskExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: ECSTaskExecutionPolicy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:CreateLogGroup
+                  - logs:PutLogEvents
+                  - s3:*
+                  - secretsmanager:GetSecretValue
+                Resource: "*"
+        - PolicyName: ecsfullaccesspolicy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - application-autoscaling:*
+                  - appmesh:*
+                  - autoscaling:*
+                  - autoscaling:UpdateAutoScalingGroup
+                  - cloudformation:CreateStack
+                  - cloudformation:DeleteStack
+                  - cloudformation:DescribeStack*
+                  - cloudformation:UpdateStack
+                  - cloudwatch:DeleteAlarms
+                  - cloudwatch:DescribeAlarms
+                  - cloudwatch:GetMetricStatistics
+                  - cloudwatch:PutMetricAlarm
+                  - codedeploy:*
+                  - ec2:*
+                  - ecs:*
+                  - elasticfilesystem:DescribeAccessPoints
+                  - elasticfilesystem:DescribeFileSystems
+                  - elasticloadbalancing:*
+                  - events:DeleteRule
+                  - events:DescribeRule
+                  - events:ListRuleNamesByTarget
+                  - events:ListTargetsByRule
+                  - events:PutRule
+                  - events:PutTargets
+                  - events:RemoveTargets
+                  - fsx:DescribeFileSystems
+                  - iam:ListAttachedRolePolicies
+                  - iam:ListInstanceProfiles
+                  - iam:ListRoles
+                  - lambda:ListFunctions
+                  - logs:CreateLogGroup
+                  - logs:DescribeLogGroups
+                  - logs:FilterLogEvents
+                  - route53:CreateHostedZone
+                  - route53:DeleteHostedZone
+                  - route53:GetHealthCheck
+                  - route53:GetHostedZone
+                  - route53:ListHostedZonesByName
+                  - servicediscovery:*
+                  - sns:ListTopics
+                Resource: "*"
+        - PolicyName: Secretmanagerreadwrite
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - secretsmanager:*
+                  - cloudformation:CreateChangeSet
+                  - cloudformation:DescribeChangeSet
+                  - cloudformation:DescribeStackResource
+                  - cloudformation:DescribeStacks
+                  - cloudformation:ExecuteChangeSet
+                  - docdb-elastic:GetCluster
+                  - docdb-elastic:ListClusters
+                  - ec2:DescribeSecurityGroups
+                  - ec2:DescribeSubnets
+                  - ec2:DescribeVpcs
+                  - kms:DescribeKey
+                  - kms:ListAliases
+                  - kms:ListKeys
+                  - lambda:ListFunctions
+                  - rds:DescribeDBClusters
+                  - rds:DescribeDBInstances
+                  - redshift:DescribeClusters
+                  - tag:GetResources
+                Resource: "*"
+        - PolicyName: AmazonEC2ContainerRegistry
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ecr:*
+                Resource: "*"
+
+
+  RepositoryLoyalty:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: !Sub "hf-loyalty-api-${Environment}"
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: Loyalty
+        - Key: Name
+          Value: !Sub "loyalty-api-${Environment}-repository"
+
+  Repositorysv2:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: !Sub "hf-sv2-${Environment}"
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: Loyalty
+        - Key: Name
+          Value: !Sub "hf-sv2-${Environment}"
+
+  ECSCluster:
+    Type: AWS::ECS::Cluster
+    Properties:
+      ClusterName: !Sub "project-${Environment}-cluster"
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: project
+        - Key: Name
+          Value: !Sub "project-${Environment}-ecs-cluster"
+
+  TaskDefinitionone:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: !Sub "task1-${Environment}"
+      NetworkMode: awsvpc
+      RequiresCompatibilities:
+        - FARGATE
+      Cpu: !If [IsProdEnv, "4096", !Ref TaskCpu]
+      Memory: !If [IsProdEnv, "8192", !Ref TaskMemory]
+      ExecutionRoleArn: !GetAtt TaskExecutionRole.Arn
+      TaskRoleArn: !GetAtt TaskRole.Arn
+      ContainerDefinitions:
+        - Name: one-api
+          Image: nginx:latest
+          PortMappings:
+            - ContainerPort: 8081
+          Secrets:
+            - Name: AWS_ACCESS_KEY_ID
+              ValueFrom: !FindInMap [EnvironmentConfigs, !Ref Environment, awsaccesskey]
+            - Name: AWS_SECRET_KEY
+              ValueFrom: !FindInMap [EnvironmentConfigs, !Ref Environment, awssecretkey]
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref ServiceoneLogsGroup 
+              awslogs-stream-prefix: one-api-
+              awslogs-region: "us-east-1"
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: projectname
+        - Key: Name
+          Value: !Sub "projectname-api-${Environment}"
+
+  TaskDefinitionsvc2:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: !Sub "fargate-task-svc2-${Environment}"
+      NetworkMode: awsvpc
+      RequiresCompatibilities:
+        - FARGATE
+      Cpu: !If [IsProdEnv, "4096", !Ref TaskCpu]
+      Memory: !If [IsProdEnv, "8192", !Ref TaskMemory]
+      ExecutionRoleArn: !GetAtt TaskExecutionRole.Arn
+      TaskRoleArn: !GetAtt TaskRole.Arn  # Assign the task role here
+      ContainerDefinitions:
+        - Name: svc2
+          Image: !Sub "${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/hf-svc2-${Environment}:latest"
+          PortMappings:
+            - ContainerPort: 8085
+          Secrets:
+            - Name: AWS_ACCESS_KEY_ID
+              ValueFrom: !FindInMap [EnvironmentConfigs, !Ref Environment, awsaccesskey]
+            - Name: AWS_SECRET_KEY
+              ValueFrom: !FindInMap [EnvironmentConfigs, !Ref Environment, awssecretkey]
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref Servicesvc2LogsGroup
+              awslogs-stream-prefix: svc2-
+              awslogs-region: "us-east-1"
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: projectname
+        - Key: Name
+          Value: !Sub "svc2-${Environment}"
+
+  Servicesvc1:
+    Type: AWS::ECS::Service
+    Properties:
+      Cluster: !Ref ECSCluster
+      ServiceName: !Sub "svc1-api-sevice-${Environment}"
+      TaskDefinition: !Ref TaskDefinitionsvc1
+      LaunchType: FARGATE
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          Subnets: !Ref SubnetIds
+          SecurityGroups:
+            - !ImportValue
+              Fn::Sub: "svc1-ecs-security-group-${Environment}"
+      LoadBalancers:
+        - ContainerName: svc1-api
+          ContainerPort: 8081
+          TargetGroupArn: !ImportValue
+            Fn::Sub: "svc1-targetgroup-arn-${Environment}"
+      DesiredCount: 1
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: svc1
+        - Key: Name
+          Value: !Sub "svc1-api-service-${Environment}"
+        
+
+  Servicesvc2:
+    Type: AWS::ECS::Service
+    Properties:
+      Cluster: !Ref ECSCluster
+      ServiceName: !Sub "svc2-service-${Environment}"
+      TaskDefinition: !Ref TaskDefinitionsvc2
+      LaunchType: FARGATE
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          Subnets: !Ref SubnetIds
+          SecurityGroups:
+            - !ImportValue 
+              Fn::Sub: "loyalty-ecs-security-group-${Environment}"
+      LoadBalancers:
+        - ContainerName: svc2
+          ContainerPort: 8085
+          TargetGroupArn: !ImportValue
+            Fn::Sub: "svc2-targetgroup-arn-${Environment}"
+      DesiredCount: 1
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: Loyalty
+        - Key: Name
+          Value: !Sub "svc2-service-${Environment}"

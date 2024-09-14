@@ -1,0 +1,182 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Loadbalancer for ECS Fargate Cluster
+
+Parameters:
+
+  Environment:
+    Type: String
+
+Mappings:
+  CertificateMapping:
+    dev:
+      CertificateArn: ""
+    stage:
+      CertificateArn: ""
+    prod:
+      CertificateArn: ""
+
+Resources:
+  SecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for ECS Fargate tasks
+      VpcId: !Sub '{{resolve:ssm:${VpcId}}}'  #Pick VPC Id stored ssm parameter store
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: '443'
+          ToPort: '443'
+          CidrIp: 0.0.0.0/0  
+        - IpProtocol: tcp
+          FromPort: '8081'
+          ToPort: '8081'
+          CidrIp: 0.0.0.0/0  
+        - IpProtocol: tcp
+          FromPort: '8085'
+          ToPort: '8085'
+          CidrIp: 0.0.0.0/0 
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: Project_name
+        - Key: Name
+          Value: !Sub "project-security-group-${Environment}"
+
+  LoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Name: !Sub "project-${Environment}"
+      Subnets: !Ref SubnetIds
+      SecurityGroups:
+        - !Ref SecurityGroup
+      Scheme: internet-facing
+      LoadBalancerAttributes:
+        - Key: idle_timeout.timeout_seconds
+          Value: '60'
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: projectname
+        - Key: Name
+          Value: !Sub "projectname-load-balancer-${Environment}"
+
+  TargetGroupOne:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: !Sub "service1-targetgroup-${Environment}"
+      Port: 8081
+      Protocol: HTTP
+      VpcId: !Sub '{{resolve:ssm:${VpcId}}}'
+      TargetType: ip
+      HealthCheckEnabled: true
+      HealthCheckPath: /project-name/actuator
+      HealthCheckProtocol: HTTP
+      HealthCheckTimeoutSeconds: 5
+      HealthCheckIntervalSeconds: 30
+      HealthyThresholdCount: 5
+      UnhealthyThresholdCount: 2
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: projectname
+        - Key: Name
+          Value: !Sub "service1-target-group-${Environment}"
+    DependsOn: LoadBalancer
+
+  TargetGrouptwo:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: !Sub "service2-targetgroup-${Environment}"
+      Port: 8085
+      Protocol: HTTP
+      VpcId: !Sub '{{resolve:ssm:${VpcId}}}'
+      TargetType: ip
+      HealthCheckEnabled: true
+      HealthCheckPath: /service2/actuator
+      HealthCheckProtocol: HTTP
+      HealthCheckTimeoutSeconds: 5
+      HealthCheckIntervalSeconds: 30
+      HealthyThresholdCount: 5
+      UnhealthyThresholdCount: 2
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: Loyalty
+        - Key: Name
+          Value: !Sub "service2-target-group-${Environment}"
+    DependsOn: LoadBalancer
+
+  DefaultListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      DefaultActions:
+        - Type: fixed-response
+          FixedResponseConfig:
+            StatusCode: 200
+            ContentType: "text/plain"
+      LoadBalancerArn: !Ref LoadBalancer
+      Port: 443
+      Protocol: HTTPS
+      SslPolicy: ELBSecurityPolicy-2016-08
+      Certificates:
+        - CertificateArn: !FindInMap [CertificateMapping, !Ref Environment, CertificateArn]
+
+  ListenerRuleone:
+    Type: AWS::ElasticLoadBalancingV2::ListenerRule
+    Properties:
+      Actions:
+        - Type: forward
+          TargetGroupArn: !Ref TargetGroupone
+      Conditions:
+        - Field: path-pattern
+          PathPatternConfig:
+            Values:
+              - /service1/*
+      ListenerArn: !Ref DefaultListener
+      Priority: 1
+
+  ListenerRuletwo:
+    Type: AWS::ElasticLoadBalancingV2::ListenerRule
+    Properties:
+      Actions:
+        - Type: forward
+          TargetGroupArn: !Ref TargetGrouptwo
+      Conditions:
+        - Field: path-pattern
+          PathPatternConfig:
+            Values:
+              - /service2/*
+      ListenerArn: !Ref DefaultListener
+      Priority: 2
+
+Outputs:
+  LoadBalancerARN:
+    Description: The ARN of the load balancer
+    Value: !Ref LoadBalancer
+    Export:
+      Name: 
+        Fn::Sub: "projectr-${Environment}"
+
+  TargetGrouponeARN:
+    Description: The ARN of the target group for one
+    Value: !Ref TargetGroupone
+    Export:
+      Name:
+        Fn::Sub: "one-targetgroup-arn-${Environment}"
+
+  TargetGrouptwoARN:
+    Description: The ARN of the target group for two
+    Value: !Ref TargetGrouptwo
+    Export:
+      Name:
+        Fn::Sub: "two-targetgroup-arn-${Environment}"
+
+  SecurityGroupID:
+    Description: The ID of the security group
+    Value: !Ref SecurityGroup
+    Export:
+      Name: 
+        Fn::Sub: "project-ecs-security-group-${Environment}"
